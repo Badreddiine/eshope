@@ -1,0 +1,86 @@
+# =====================================================================
+#  EShop — Pipeline CI (build + tests + qualité + build image Docker)
+# =====================================================================
+#  Le projet Maven se trouve dans backend/ ; le docker-compose et le
+#  Dockerfile sont respectivement à la racine et dans backend/.
+# =====================================================================
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  # -------------------------------------------------------------------
+  # 1) Compilation + tests unitaires
+  # -------------------------------------------------------------------
+  build-and-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17 (Temurin) + cache ~/.m2
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Build + tests (mvn clean verify)
+        run: mvn -B clean verify
+
+      - name: Upload des rapports Surefire
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: backend/target/surefire-reports/
+
+  # -------------------------------------------------------------------
+  # 2) Analyse qualité : Checkstyle + dépendances inutilisées
+  # -------------------------------------------------------------------
+  code-quality:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17 (Temurin) + cache ~/.m2
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Checkstyle sur src/main/java (non bloquant)
+        run: >
+          mvn -B org.apache.maven.plugins:maven-checkstyle-plugin:3.3.1:check
+          -Dcheckstyle.includes='**/*.java'
+          -Dcheckstyle.failOnViolation=false
+
+      - name: Analyse des dépendances inutilisées
+        run: mvn -B test-compile dependency:analyze
+
+  # -------------------------------------------------------------------
+  # 3) Build de l'image Docker du backend (validation, sans push)
+  #    Dockerfile multi-stage : le jar est compilé dans l'image.
+  # -------------------------------------------------------------------
+  docker-build:
+    needs: code-quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build de l'image Docker (pas de push)
+        run: docker build -t eshop-backend:${{ github.sha }} ./backend

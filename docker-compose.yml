@@ -1,0 +1,182 @@
+# =====================================================================
+#  EShop — Stack complete : Oracle (x3) + backend + observabilite
+# =====================================================================
+#  Un SEUL docker-compose a la racine du projet orchestre :
+#    oracle-global (1521) : base maitre, db links, triggers de routage
+#    oracle-site1  (1522) : fragment "gros volumes"  (Quantite >= 100)
+#    oracle-site2  (1523) : fragment "petits volumes" (Quantite < 100)
+#    eshop-backend (8080) : API REST Spring Boot (auth JWT incluse)
+#    prometheus    (9090) : scrape de backend:8080/actuator/prometheus
+#    grafana       (3000) : dashboards (admin/admin)
+#    cadvisor      (8081) : metriques conteneurs
+#
+#  PORTS : "1522:1521" => l'hote accede a Site1 sur 1522, mais a
+#  l'interieur du reseau "eshop-network" chaque listener Oracle ecoute
+#  sur 1521. Le backend et les database links utilisent donc les noms
+#  de services (oracle-site1, oracle-site2, oracle-global) sur le port
+#  interne 1521 — jamais localhost.
+#
+#  Le Dockerfile du backend est multi-stage : il compile le jar dans
+#  l'image (aucun "mvn package" prealable n'est requis).
+#
+#  Initialisation SQL : APRES "docker compose up -d", lancer ./database/
+#  init.sh qui charge les fragments puis le site global (les db links
+#  exigent que site1/site2 soient deja debout). La table USERS et les
+#  comptes de demo sont, eux, crees automatiquement par le backend au
+#  demarrage (DataInitializer).
+# =====================================================================
+
+services:
+  oracle-global:
+    image: gvenzl/oracle-xe:21-slim
+    container_name: oracle-global
+    hostname: oracle-global
+    ports:
+      - "1521:1521"
+    environment:
+      ORACLE_PASSWORD: oracle
+      APP_USER: eshop
+      APP_USER_PASSWORD: eshop
+    volumes:
+      - oracle_global_data:/opt/oracle/oradata
+      - ./database/global:/sql:ro
+    networks:
+      - eshop-network
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+
+  oracle-site1:
+    image: gvenzl/oracle-xe:21-slim
+    container_name: oracle-site1
+    hostname: oracle-site1
+    ports:
+      - "1522:1521"
+    environment:
+      ORACLE_PASSWORD: oracle
+      APP_USER: eshop
+      APP_USER_PASSWORD: eshop
+    volumes:
+      - oracle_site1_data:/opt/oracle/oradata
+      - ./database/site1:/sql:ro
+    networks:
+      - eshop-network
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+
+  oracle-site2:
+    image: gvenzl/oracle-xe:21-slim
+    container_name: oracle-site2
+    hostname: oracle-site2
+    ports:
+      - "1523:1521"
+    environment:
+      ORACLE_PASSWORD: oracle
+      APP_USER: eshop
+      APP_USER_PASSWORD: eshop
+    volumes:
+      - oracle_site2_data:/opt/oracle/oradata
+      - ./database/site2:/sql:ro
+    networks:
+      - eshop-network
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+
+  eshop-backend:
+    build:
+      context: ./backend
+    container_name: eshop-backend
+    hostname: eshop-backend
+    ports:
+      - "8080:8080"
+    environment:
+      # Profil docker : URLs JDBC pointant vers les hostnames du reseau
+      SPRING_PROFILES_ACTIVE: docker
+      # Surcharge possible de la cle JWT (sinon valeur de application.yml)
+      JWT_SECRET: eshop-secret-key-minimum-256-bits-for-hs256-algo
+    depends_on:
+      oracle-global:
+        condition: service_healthy
+      oracle-site1:
+        condition: service_healthy
+      oracle-site2:
+        condition: service_healthy
+    networks:
+      eshop-network:
+        # Alias "backend" : Prometheus scrute backend:8080
+        aliases:
+          - backend
+
+  # -------------------------------------------------------------------
+  #  Observabilite : Prometheus + Grafana + cAdvisor
+  # -------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: eshop-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+    networks:
+      - eshop-network
+    depends_on:
+      - eshop-backend
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: eshop-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    networks:
+      - eshop-network
+    depends_on:
+      - prometheus
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: eshop-cadvisor
+    ports:
+      - "8081:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    networks:
+      - eshop-network
+
+# Volumes nommes : persistance des datafiles + observabilite
+volumes:
+  oracle_global_data:
+  oracle_site1_data:
+  oracle_site2_data:
+  prometheus_data:
+  grafana_data:
+
+# Reseau bridge dedie : resolution DNS par nom de service
+networks:
+  eshop-network:
+    driver: bridge

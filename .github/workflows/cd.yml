@@ -1,0 +1,36 @@
+# =====================================================================
+#  EShop — Pipeline CD (déploiement local sur merge vers main)
+# =====================================================================
+#  Démarre toute la stack via le docker-compose.yml unique (3 Oracle +
+#  backend + observabilité), puis vérifie que le backend répond sur
+#  /actuator/health. Le Dockerfile backend est multi-stage : il compile
+#  le jar lui-même, aucune étape Maven préalable n'est nécessaire.
+# =====================================================================
+name: CD
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy-local:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Démarrer la stack (docker compose up -d --build)
+        run: docker compose up -d --build
+
+      - name: Attendre le backend (healthcheck)
+        run: >
+          curl --retry 10 --retry-delay 5 --retry-connrefused
+          -fsS http://localhost:8080/actuator/health
+
+      - name: Logs des conteneurs en cas d'échec
+        if: failure()
+        run: docker compose logs --tail=200
+
+      - name: Arrêter la stack
+        if: always()
+        run: docker compose down -v

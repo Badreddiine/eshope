@@ -1,0 +1,89 @@
+# =====================================================================
+#  EShop backend — Configuration multi-datasource + observabilite
+# =====================================================================
+#  NOTE IMPORTANTE sur l'URL JDBC :
+#  XEPDB1 est une PDB (service name), pas un SID. La syntaxe service-name
+#  "//host:port/XEPDB1" est donc requise. La forme historique a deux-points
+#  "host:port:SID" ne se connecte PAS a une PDB.
+#
+#  HOTES : on utilise les noms de services Docker (oracle-global,
+#  oracle-site1, oracle-site2) du reseau "eshop-network" — jamais
+#  localhost. A l'interieur du reseau, le listener Oracle de CHAQUE
+#  conteneur ecoute sur le port 1521 ; les ports 1521/1522/1523 ne sont
+#  que les ports PUBLIES vers l'hote. Les URLs ci-dessous ciblent donc le
+#  port interne 1521.
+# =====================================================================
+
+server:
+  port: 8080
+
+datasource:
+  # ---- Site GLOBAL (@Primary) : lectures JPA + appels de procedures ----
+  global:
+    jdbc-url: jdbc:oracle:thin:@//oracle-global:1521/XEPDB1
+    username: eshop
+    password: eshop
+    driver-class-name: oracle.jdbc.OracleDriver
+    pool-name: hikari-global
+    maximum-pool-size: 10
+    minimum-idle: 2
+    connection-timeout: 30000
+    connection-test-query: SELECT 1 FROM dual
+
+  # ---- Site1 (gros volumes) : utilise pour le health-check ----
+  site1:
+    jdbc-url: jdbc:oracle:thin:@//oracle-site1:1521/XEPDB1
+    username: eshop
+    password: eshop
+    driver-class-name: oracle.jdbc.OracleDriver
+    pool-name: hikari-site1
+    maximum-pool-size: 5
+    minimum-idle: 1
+    connection-timeout: 30000
+    connection-test-query: SELECT 1 FROM dual
+
+  # ---- Site2 (petits volumes) : utilise pour le health-check ----
+  site2:
+    jdbc-url: jdbc:oracle:thin:@//oracle-site2:1521/XEPDB1
+    username: eshop
+    password: eshop
+    driver-class-name: oracle.jdbc.OracleDriver
+    pool-name: hikari-site2
+    maximum-pool-size: 5
+    minimum-idle: 1
+    connection-timeout: 30000
+    connection-test-query: SELECT 1 FROM dual
+
+spring:
+  jpa:
+    # Le schema est gere par les scripts SQL / init.sh, jamais par Hibernate
+    hibernate:
+      ddl-auto: none
+    database-platform: org.hibernate.dialect.OracleDialect
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      application: eshop-backend
+
+# =====================================================================
+#  Securite JWT (HS256)
+# =====================================================================
+#  jwt.secret  : cle de signature (>= 256 bits). A surcharger en prod via
+#                la variable d'environnement JWT_SECRET.
+#  jwt.expiration : duree de validite du token en millisecondes (24 h).
+# =====================================================================
+jwt:
+  secret: ${JWT_SECRET:eshop-secret-key-minimum-256-bits-for-hs256-algo}
+  expiration: 86400000

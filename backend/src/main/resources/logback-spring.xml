@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  EShop backend — journalisation structuree JSON (logstash-logback-encoder).
+
+  Chaque evenement est emis en JSON sur stdout (collecte par Docker), avec les
+  champs MDC : traceId (filtre LoggingConfig), procedureName / siteName /
+  durationMs (ProcedureMetrics). Niveaux : INFO global, DEBUG sur le package
+  des services metier.
+-->
+<configuration>
+
+    <appender name="JSON" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <!-- Inclut automatiquement toutes les cles MDC (traceId, procedureName, ...) -->
+            <includeMdc>true</includeMdc>
+            <includeContext>false</includeContext>
+            <customFields>{"application":"eshop-backend"}</customFields>
+            <fieldNames>
+                <timestamp>timestamp</timestamp>
+                <message>message</message>
+                <logger>logger</logger>
+                <thread>thread</thread>
+                <levelValue>[ignore]</levelValue>
+            </fieldNames>
+        </encoder>
+    </appender>
+
+    <!-- INFO en production -->
+    <root level="INFO">
+        <appender-ref ref="JSON"/>
+    </root>
+
+    <!-- DEBUG sur la couche service (appels de procedures stockees) -->
+    <logger name="ma.eshop.service" level="DEBUG"/>
+
+</configuration>

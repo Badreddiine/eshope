@@ -1,0 +1,21 @@
+# =====================================================================
+#  Profil "docker" (active par SPRING_PROFILES_ACTIVE=docker)
+# =====================================================================
+#  Surcharges appliquees quand le backend tourne DANS le reseau Docker
+#  "eshop-network". Les URLs ciblent les noms de services Oracle sur leur
+#  port interne 1521 (jamais localhost). Identiques aux valeurs par defaut
+#  de application.yml : ce fichier rend le profil explicite et autonome.
+# =====================================================================
+datasource:
+  global:
+    jdbc-url: jdbc:oracle:thin:@//oracle-global:1521/XEPDB1
+  site1:
+    jdbc-url: jdbc:oracle:thin:@//oracle-site1:1521/XEPDB1
+  site2:
+    jdbc-url: jdbc:oracle:thin:@//oracle-site2:1521/XEPDB1
+
+spring:
+  jpa:
+    properties:
+      hibernate:
+        format_sql: false
